@@ -1,0 +1,423 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Alcohol Detection System</title>
+<style>
+:root{--bg:#0f172a;--panel:#1e293b;--line:#334155;--text:#e2e8f0;--mute:#94a3b8;--ok:#22c55e;--bad:#ef4444;--warn:#f59e0b;--accent:#38bdf8}
+*{box-sizing:border-box}
+body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--text);line-height:1.45}
+header{padding:18px 20px;border-bottom:1px solid var(--line);display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+header h1{font-size:1.15rem;margin:0}
+header small{color:var(--mute)}
+main{max-width:1100px;margin:0 auto;padding:16px;display:grid;gap:16px;grid-template-columns:1fr}
+@media(min-width:900px){main{grid-template-columns:1.1fr .9fr}.full{grid-column:1/-1}}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px}
+.panel h2{font-size:.95rem;margin:0 0 12px;color:var(--accent);text-transform:uppercase;letter-spacing:.05em}
+#card{text-align:center;padding:28px 16px;border-radius:14px;border:2px solid var(--ok);background:rgba(34,197,94,.08)}
+#card.alert{border-color:var(--bad);background:rgba(239,68,68,.15)}
+#card.idle{border-color:var(--line);background:transparent}
+#stateText{font-size:2rem;font-weight:800;letter-spacing:.03em}
+#card.safe #stateText{color:var(--ok)}#card.alert #stateText{color:var(--bad)}#card.idle #stateText{color:var(--mute)}
+#stateSub{color:var(--mute);margin-top:4px}
+.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:14px}
+.stat{background:#0b1220;border:1px solid var(--line);border-radius:10px;padding:10px;text-align:center}
+.stat b{display:block;font-size:1.05rem}.stat span{font-size:.75rem;color:var(--mute)}
+button{background:#334155;color:var(--text);border:0;border-radius:9px;padding:10px 14px;font-size:.9rem;cursor:pointer}
+button:hover{background:#475569}button.pri{background:#0284c7}button.pri:hover{background:#0369a1}
+button.danger{background:#b91c1c}button.danger:hover{background:#991b1b}
+.row{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+label{display:block;font-size:.8rem;color:var(--mute);margin:10px 0 4px}
+input,textarea,select{width:100%;background:#0b1220;color:var(--text);border:1px solid var(--line);border-radius:8px;padding:9px;font:inherit}
+input[type=checkbox]{width:auto;margin-right:6px}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+#log{background:#020617;border:1px solid var(--line);border-radius:10px;height:190px;overflow:auto;padding:8px;font:12px/1.5 ui-monospace,Menlo,Consolas,monospace}
+#log .t{color:#64748b}#log .e{color:#fca5a5}#log .a{color:#fbbf24}
+ul{list-style:none;margin:8px 0 0;padding:0}
+li{display:flex;justify-content:space-between;align-items:center;background:#0b1220;border:1px solid var(--line);border-radius:8px;padding:7px 10px;margin-bottom:6px}
+li button{padding:3px 9px;font-size:.8rem}
+table{width:100%;border-collapse:collapse;font-size:.85rem}
+th,td{text-align:left;padding:7px;border-bottom:1px solid var(--line)}th{color:var(--mute);font-weight:600}
+.badge{display:inline-block;padding:2px 9px;border-radius:99px;font-size:.75rem;background:#334155}
+.badge.ok{background:rgba(34,197,94,.2);color:#86efac}.badge.bad{background:rgba(239,68,68,.2);color:#fca5a5}
+.hint{font-size:.78rem;color:var(--mute);margin-top:6px}
+#fallback a{display:inline-block;margin:4px 6px 0 0;color:#fff;background:#0284c7;padding:7px 12px;border-radius:8px;text-decoration:none;font-size:.85rem}
+body.alarm{animation:flash .7s infinite}
+@keyframes flash{50%{background:#450a0a}}
+[hidden]{display:none!important}
+</style>
+</head>
+<body>
+<header>
+  <h1>🚗 Alcohol Detection &amp; Engine Lock System</h1>
+  <small>Live monitor · automatic SMS alerts</small>
+  <span style="margin-left:auto" class="badge" id="conn">Not connected</span>
+  <span class="badge" id="backendBadge">Backend: checking…</span>
+</header>
+
+<main>
+  <section class="panel">
+    <div id="card" class="idle">
+      <div id="stateText">WAITING</div>
+      <div id="stateSub">Connect to the ESP32 to start monitoring</div>
+      <div class="stats">
+        <div class="stat"><b id="reading">–</b><span>Last sensor value</span></div>
+        <div class="stat"><b id="engine">–</b><span>Engine</span></div>
+        <div class="stat"><b id="lastSms">–</b><span>Last SMS</span></div>
+      </div>
+      <div class="row" style="justify-content:center">
+        <button id="btnSilence" class="danger" hidden>🔕 Silence alarm</button>
+        <button id="btnReset" hidden>✔ Acknowledge &amp; reset</button>
+      </div>
+    </div>
+
+    <h2 style="margin-top:20px">Connect to ESP32</h2>
+    <div class="row" style="margin-top:0">
+      <button class="pri" id="btnBle">Bluetooth LE</button>
+      <button class="pri" id="btnSerial">Bluetooth Classic (Serial)</button>
+      <button id="btnDisconnect" hidden>Disconnect</button>
+    </div>
+    <p class="hint">Use <b>Bluetooth LE</b> if your ESP32 code uses BLE. If it uses <code>BluetoothSerial</code> (classic), pair it with your PC first, then use <b>Classic (Serial)</b> and pick its COM port. Chrome / Edge only.</p>
+
+    <h2 style="margin-top:20px">Live data from ESP32</h2>
+    <div id="log"></div>
+    <div class="row">
+      <button id="btnSimSafe">Test: safe reading</button>
+      <button id="btnSimAlert" class="danger">Test: alcohol detected</button>
+      <button id="btnTestSms">Send test SMS</button>
+    </div>
+    <div id="fallback" class="hint" hidden></div>
+  </section>
+
+  <section class="panel">
+    <h2>Alert phone numbers</h2>
+    <div class="two" style="grid-template-columns:1fr auto">
+      <input id="newNum" placeholder="e.g. 9876543210 or +919876543210" inputmode="tel">
+      <button class="pri" id="btnAddNum">Add</button>
+    </div>
+    <ul id="numList"></ul>
+
+    <h2 style="margin-top:20px">SMS settings</h2>
+    <label>Vehicle name / number</label>
+    <input data-key="vehicle" placeholder="e.g. TN 01 AB 1234">
+    <label>Message template (<code>{vehicle}</code> <code>{time}</code> <code>{location}</code>)</label>
+    <textarea data-key="template" rows="3"></textarea>
+    <div class="two">
+      <div><label>Min. seconds between SMS</label><input type="number" min="0" data-key="cooldown"></div>
+      <div><label>SMS server URL (blank = same site)</label><input data-key="backend" placeholder="https://your-server.com"></div>
+    </div>
+    <label>Access code (only if you set ACCESS_CODE on the server)</label>
+    <input data-key="code" type="password">
+    <label><input type="checkbox" data-key="autoSms">Send SMS automatically on alert</label>
+    <label><input type="checkbox" data-key="useGps">Add GPS location link (asks location permission)</label>
+
+    <h2 style="margin-top:20px">How to read ESP32 messages</h2>
+    <label>Detection mode</label>
+    <select data-key="mode">
+      <option value="keyword">Text keywords (ESP32 prints words like “ALCOHOL DETECTED”)</option>
+      <option value="number">Number above threshold (ESP32 prints sensor value)</option>
+    </select>
+    <label>Alert words (comma separated)</label>
+    <textarea data-key="alertWords" rows="2"></textarea>
+    <label>Safe words (checked first, comma separated)</label>
+    <textarea data-key="safeWords" rows="2"></textarea>
+    <div class="two">
+      <div><label>Threshold (number mode)</label><input type="number" data-key="threshold"></div>
+      <div><label>Baud rate (Serial)</label><input type="number" data-key="baud"></div>
+    </div>
+    <details style="margin-top:10px"><summary class="hint">BLE UUIDs (default = Nordic UART)</summary>
+      <label>Service UUID</label><input data-key="svc">
+      <label>Notify characteristic UUID</label><input data-key="chr">
+    </details>
+  </section>
+
+  <section class="panel full">
+    <h2>Alert history</h2>
+    <table><thead><tr><th>Time</th><th>Event</th><th>SMS</th></tr></thead><tbody id="hist"></tbody></table>
+    <div class="row"><button id="btnClearHist">Clear history</button></div>
+  </section>
+</main>
+
+<script>
+const $ = s => document.querySelector(s);
+const DEF = {
+  numbers: [], vehicle: '',
+  template: 'ALERT: Alcohol detected in vehicle {vehicle} at {time}. Engine has been switched off.{location}',
+  backend: '', code: '', cooldown: 60, autoSms: true, useGps: false,
+  mode: 'keyword',
+  alertWords: 'ALCOHOL DETECTED, ALCOHOL, DRUNK, DANGER, ENGINE OFF',
+  safeWords: 'NO ALCOHOL, NOT DETECTED, SAFE, NORMAL, ENGINE ON',
+  threshold: 400, baud: 9600,
+  svc: '6e400001-b5a3-f393-e0a9-e50e24dcca9e',
+  chr: '6e400003-b5a3-f393-e0a9-e50e24dcca9e'
+};
+const store = {
+  get(k, d) { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} }
+};
+let S = Object.assign({}, DEF, store.get('ads.settings', {}));
+let history = store.get('ads.history', []);
+const save = () => store.set('ads.settings', S);
+
+/* ---------- settings binding ---------- */
+document.querySelectorAll('[data-key]').forEach(el => {
+  const k = el.dataset.key;
+  if (el.type === 'checkbox') el.checked = !!S[k]; else el.value = S[k];
+  el.addEventListener('change', () => {
+    S[k] = el.type === 'checkbox' ? el.checked : el.type === 'number' ? Number(el.value) : el.value.trim();
+    save();
+    if (k === 'backend' || k === 'code') pingBackend();
+  });
+});
+
+/* ---------- phone numbers ---------- */
+function renderNums() {
+  const ul = $('#numList'); ul.innerHTML = '';
+  if (!S.numbers.length) { ul.innerHTML = '<li style="color:var(--mute)">No numbers added yet</li>'; return; }
+  S.numbers.forEach((n, i) => {
+    const li = document.createElement('li');
+    li.innerHTML = `<span>📱 ${n}</span>`;
+    const b = document.createElement('button'); b.textContent = 'Remove';
+    b.onclick = () => { S.numbers.splice(i, 1); save(); renderNums(); };
+    li.appendChild(b); ul.appendChild(li);
+  });
+}
+$('#btnAddNum').onclick = () => {
+  const v = $('#newNum').value.replace(/[\s-]/g, '');
+  if (!/^\+?\d{10,15}$/.test(v)) return alert('Enter a valid phone number (10–15 digits).');
+  if (S.numbers.includes(v)) return;
+  if (S.numbers.length >= 10) return alert('Maximum 10 numbers.');
+  S.numbers.push(v); save(); renderNums(); $('#newNum').value = '';
+};
+
+/* ---------- log / state ---------- */
+function log(msg, cls = '') {
+  const d = document.createElement('div');
+  d.innerHTML = `<span class="t">${new Date().toLocaleTimeString()}</span> <span class="${cls}"></span>`;
+  d.lastChild.textContent = msg;
+  const box = $('#log'); box.appendChild(d);
+  while (box.children.length > 200) box.firstChild.remove();
+  box.scrollTop = box.scrollHeight;
+}
+function setConn(text, ok) {
+  const c = $('#conn'); c.textContent = text; c.className = 'badge' + (ok === true ? ' ok' : ok === false ? ' bad' : '');
+  $('#btnDisconnect').hidden = !ok;
+}
+let latched = false;
+function setState(st) {
+  const card = $('#card');
+  card.className = st;
+  if (st === 'alert') {
+    $('#stateText').textContent = '⚠ ALCOHOL DETECTED';
+    $('#stateSub').textContent = 'Engine cut-off triggered · alerts sent to saved numbers';
+    $('#engine').textContent = 'CUT OFF';
+    $('#btnReset').hidden = false;
+  } else if (st === 'safe') {
+    $('#stateText').textContent = 'SAFE';
+    $('#stateSub').textContent = 'No alcohol detected';
+    $('#engine').textContent = 'Can run';
+    $('#btnReset').hidden = true;
+  } else {
+    $('#stateText').textContent = 'WAITING';
+    $('#stateSub').textContent = 'Connect to the ESP32 to start monitoring';
+    $('#engine').textContent = '–';
+    $('#btnReset').hidden = true;
+  }
+}
+
+/* ---------- alarm ---------- */
+let actx, osc, sirenTimer, alarmOn = false;
+function ensureAudio() {
+  try { actx = actx || new (window.AudioContext || window.webkitAudioContext)(); actx.resume(); } catch {}
+}
+function startAlarm() {
+  if (alarmOn) return; alarmOn = true; ensureAudio();
+  try {
+    osc = actx.createOscillator(); const g = actx.createGain(); g.gain.value = 0.3;
+    osc.type = 'square'; osc.connect(g); g.connect(actx.destination); osc.start();
+    let hi = false;
+    sirenTimer = setInterval(() => { hi = !hi; osc.frequency.value = hi ? 960 : 640; navigator.vibrate && navigator.vibrate(300); }, 400);
+  } catch {}
+  document.body.classList.add('alarm'); $('#btnSilence').hidden = false;
+}
+function stopAlarm() {
+  alarmOn = false; clearInterval(sirenTimer);
+  try { osc && osc.stop(); } catch {}
+  document.body.classList.remove('alarm'); $('#btnSilence').hidden = true;
+}
+$('#btnSilence').onclick = stopAlarm;
+$('#btnReset').onclick = () => { stopAlarm(); latched = false; setState('safe'); log('Alert acknowledged and reset'); };
+
+/* ---------- history ---------- */
+function renderHist() {
+  const tb = $('#hist'); tb.innerHTML = '';
+  if (!history.length) { tb.innerHTML = '<tr><td colspan="3" style="color:var(--mute)">No alerts yet</td></tr>'; return; }
+  history.slice().reverse().forEach(h => {
+    const tr = document.createElement('tr');
+    const cls = h.sms.startsWith('Sent') ? 'ok' : h.sms.startsWith('Failed') ? 'bad' : '';
+    tr.innerHTML = `<td>${h.time}</td><td></td><td><span class="badge ${cls}"></span></td>`;
+    tr.children[1].textContent = h.event; tr.children[2].firstChild.textContent = h.sms;
+    tb.appendChild(tr);
+  });
+}
+function addHist(event, sms) {
+  history.push({ time: new Date().toLocaleString(), event, sms });
+  history = history.slice(-50); store.set('ads.history', history); renderHist();
+}
+$('#btnClearHist').onclick = () => { history = []; store.set('ads.history', history); renderHist(); };
+
+/* ---------- parsing ---------- */
+const words = s => s.split(',').map(x => x.trim().toUpperCase()).filter(Boolean);
+function classify(line) {
+  const up = line.toUpperCase();
+  const m = line.match(/-?\d+(\.\d+)?/);
+  const value = m ? parseFloat(m[0]) : null;
+  if (S.mode === 'number') {
+    if (value === null) return { state: 'unknown', value };
+    return { state: value > S.threshold ? 'alert' : 'safe', value };
+  }
+  if (words(S.safeWords).some(w => up.includes(w))) return { state: 'safe', value };
+  if (words(S.alertWords).some(w => up.includes(w))) return { state: 'alert', value };
+  return { state: 'unknown', value };
+}
+let buf = '', flushTimer;
+function feed(text) {
+  buf += text;
+  const parts = buf.split(/\r?\n|\r/);
+  buf = parts.pop();
+  parts.forEach(l => l.trim() && handleLine(l.trim()));
+  clearTimeout(flushTimer);
+  if (buf.trim()) flushTimer = setTimeout(() => { const l = buf.trim(); buf = ''; if (l) handleLine(l); }, 400);
+}
+function handleLine(line) {
+  const c = classify(line);
+  log(line, c.state === 'alert' ? 'a' : '');
+  if (c.value !== null) $('#reading').textContent = c.value;
+  if (c.state === 'alert') onAlert(line);
+  else if (c.state === 'safe' && !latched) setState('safe');
+}
+let lastSmsAt = 0, lastAlertLine = '';
+function onAlert(line) {
+  lastAlertLine = line;
+  const first = !latched;
+  latched = true; setState('alert'); startAlarm();
+  if (first) addHist('Alcohol detected: ' + line, 'Pending');
+  if (S.autoSms && Date.now() - lastSmsAt > S.cooldown * 1000) {
+    lastSmsAt = Date.now();
+    sendSms(false);
+  }
+}
+
+/* ---------- SMS ---------- */
+const base = () => S.backend.replace(/\/$/, '');
+function getPos() {
+  return new Promise((res, rej) => navigator.geolocation.getCurrentPosition(res, rej, { timeout: 5000, maximumAge: 60000 }));
+}
+async function buildMessage() {
+  let loc = '';
+  if (S.useGps && navigator.geolocation) {
+    try { const p = await getPos(); loc = ` Location: https://maps.google.com/?q=${p.coords.latitude},${p.coords.longitude}`; } catch {}
+  }
+  return S.template.replaceAll('{vehicle}', S.vehicle || 'vehicle')
+    .replaceAll('{time}', new Date().toLocaleString())
+    .replaceAll('{location}', loc).slice(0, 450);
+}
+function setHistSms(text) {
+  for (let i = history.length - 1; i >= 0; i--) { if (history[i].sms === 'Pending') { history[i].sms = text; break; } }
+  store.set('ads.history', history); renderHist();
+}
+async function sendSms(isTest) {
+  if (!S.numbers.length) { log('No phone numbers saved — SMS not sent', 'e'); setHistSms('Failed: no numbers'); return; }
+  const message = (isTest ? 'TEST: ' : '') + await buildMessage();
+  log('Sending SMS to ' + S.numbers.length + ' number(s)…');
+  try {
+    const headers = { 'Content-Type': 'application/json' };
+    if (S.code) headers['x-access-code'] = S.code;
+    const r = await fetch(base() + '/api/send-sms', { method: 'POST', headers, body: JSON.stringify({ numbers: S.numbers, message, vehicle: S.vehicle, reading: isTest ? 'test' : lastAlertLine, test: !!isTest }) });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok || !j.ok) throw new Error(j.error || ('HTTP ' + r.status));
+    log('SMS sent ✔ (' + (j.provider || '') + ')');
+    $('#lastSms').textContent = new Date().toLocaleTimeString();
+    if (!isTest) setHistSms('Sent ' + new Date().toLocaleTimeString());
+    $('#fallback').hidden = true;
+  } catch (e) {
+    log('SMS failed: ' + e.message, 'e');
+    if (!isTest) setHistSms('Failed: ' + e.message);
+    showFallback(message);
+  }
+}
+function showFallback(message) {
+  const f = $('#fallback'); f.hidden = false;
+  f.innerHTML = '<b>SMS server not reachable.</b> Tap to send manually from this phone:<br>';
+  S.numbers.forEach(n => { const a = document.createElement('a'); a.href = `sms:${n}?body=${encodeURIComponent(message)}`; a.textContent = 'SMS ' + n; f.appendChild(a); });
+}
+$('#btnTestSms').onclick = () => sendSms(true);
+
+async function pingBackend() {
+  const b = $('#backendBadge');
+  try {
+    const r = await fetch(base() + '/api/health'); const j = await r.json();
+    b.textContent = 'SMS server: ' + j.provider; b.className = 'badge ok';
+  } catch { b.textContent = 'SMS server: offline'; b.className = 'badge bad'; }
+}
+
+/* ---------- connections ---------- */
+let bleDev = null, port = null, reader = null, serialClosed = null, wakeLock = null;
+async function keepAwake() { try { wakeLock = await navigator.wakeLock.request('screen'); } catch {} }
+
+$('#btnBle').onclick = async () => {
+  if (!navigator.bluetooth) return alert('Web Bluetooth is not supported here. Use Chrome or Edge (Android / desktop) over HTTPS or localhost.');
+  ensureAudio();
+  try {
+    const svc = S.svc.toLowerCase(), chr = S.chr.toLowerCase();
+    bleDev = await navigator.bluetooth.requestDevice({ acceptAllDevices: true, optionalServices: [svc] });
+    setConn('Connecting…');
+    const server = await bleDev.gatt.connect();
+    const service = await server.getPrimaryService(svc);
+    const ch = await service.getCharacteristic(chr);
+    await ch.startNotifications();
+    const dec = new TextDecoder();
+    ch.addEventListener('characteristicvaluechanged', e => feed(dec.decode(e.target.value)));
+    bleDev.addEventListener('gattserverdisconnected', () => { setConn('Disconnected', false); log('Bluetooth disconnected', 'e'); });
+    setConn('Connected (BLE): ' + (bleDev.name || 'device'), true);
+    log('Connected to ' + (bleDev.name || 'device')); setState(latched ? 'alert' : 'safe'); keepAwake();
+  } catch (e) { setConn('Not connected', false); log('BLE error: ' + e.message, 'e'); }
+};
+
+$('#btnSerial').onclick = async () => {
+  if (!('serial' in navigator)) return alert('Web Serial is not supported here. Use Chrome or Edge on a PC/laptop.');
+  ensureAudio();
+  try {
+    port = await navigator.serial.requestPort();
+    await port.open({ baudRate: S.baud || 9600 });
+    const dec = new TextDecoderStream();
+    serialClosed = port.readable.pipeTo(dec.writable).catch(() => {});
+    reader = dec.readable.getReader();
+    setConn('Connected (Serial)', true); log('Serial port opened'); setState(latched ? 'alert' : 'safe'); keepAwake();
+    (async () => {
+      try { while (true) { const { value, done } = await reader.read(); if (done) break; feed(value); } }
+      catch (e) { log('Serial error: ' + e.message, 'e'); }
+      setConn('Disconnected', false);
+    })();
+  } catch (e) { setConn('Not connected', false); log('Serial error: ' + e.message, 'e'); }
+};
+
+$('#btnDisconnect').onclick = async () => {
+  try { if (bleDev && bleDev.gatt.connected) bleDev.gatt.disconnect(); } catch {}
+  try { if (reader) { await reader.cancel(); await serialClosed; await port.close(); } } catch {}
+  reader = null; port = null; bleDev = null;
+  try { wakeLock && wakeLock.release(); } catch {}
+  setConn('Disconnected', false); log('Disconnected');
+};
+
+/* ---------- test buttons ---------- */
+$('#btnSimSafe').onclick = () => { ensureAudio(); feed(S.mode === 'number' ? 'MQ3: 120\n' : 'NO ALCOHOL\n'); };
+$('#btnSimAlert').onclick = () => { ensureAudio(); feed(S.mode === 'number' ? 'MQ3: ' + (S.threshold + 250) + '\n' : 'ALCOHOL DETECTED\n'); };
+
+/* ---------- init ---------- */
+renderNums(); renderHist(); setState('idle'); pingBackend();
+log('Ready. Connect to your ESP32, or use the Test buttons.');
+</script>
+</body>
+</html>
